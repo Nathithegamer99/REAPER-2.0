@@ -1,77 +1,94 @@
-const { Client, Collection, MessageEmbed, Guild } = require("discord.js")
+const fs = require("fs");
+const chalk = require("chalk");
 
-const fs = require("fs")
+const { Client, Collection, GatewayIntentBits, EmbedBuilder } = require("discord.js");
+const { DEFAULT_PREFIX, BOT_TOKEN, ERROR_LOGS_CHANNEL, YT_COOKIE } = require("./config.json");
+const { loadCommands } = require("./handler/loadCommands");
+const { loadEvents } = require("./handler/loadEvents");
+const { loadSlashCommands } = require("./handler/loadSlashCommands")
+const { loadPlayerEvents } = require("./handler/loadPlayerEvents");
+const { DiscordTogether } = require('discord-together');
+const { Player } = require('discord-player');
+const Enmap = require("enmap");
+
 const client = new Client({
-  disableEveryone: "true" // This makes sure that the bot does not mention everyone
+  allowedMentions: { parse: ["users", "roles"] },
+  intents: 47007
 });
+const { checkValid } = require("./functions/validation/checkValid");
+const Embeds = require("./functions/embeds/Embeds");
+const Logger = require("./functions/Logger/Logger");
+const Util = require("./functions/util/Util");
+
+client.discordTogether = new DiscordTogether(client);
 client.commands = new Collection();
+client.slash = new Collection();
 client.aliases = new Collection();
-client.categories = fs.readdirSync("./Commands/")
-const config = require("./config.json")// enter your bot prefix in the config.json file
-const mongoose = require("mongoose")
-const prefixModel = require("./database/guildData/prefix")
-
-['command'].forEach(handler => {
-  require(`./handler/${handler}`)(client);
-})
-
-mongoose.connect(config.mongoPass, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-  useFindAndModify: false,
-});
-
-client.on("ready", ()=> {
-  client.user.setPresence({ status: 'online' });
-  client.user.setActivity("Hello", {type: "STREAMING"});
-  console.log(`Logged in as ${client.user.tag}`)
-})
-
-client.on('message', async (message) => {
-  const data = prefixModel.findOne({ GuildID: message.guild.id })
-  if (data) {
-   var prefix = data.Prefix;
-  } else if (!data) {
-   prefix = config.DEFAULT_PREFIX;
-  }
-client.prefix = prefix;
-
-    if (message.author.bot) return; // This line makes sure that the bot does not respond to other bots
-    if (!message.guild) return;
-    if (!message.content.startsWith(prefix)) return; // This line makes sure that the bot does not respond to other messages with the bots prefix
-    if (!message.member) message.member = await message.guild.fetchMember(message);
-
-    const args = message.content.slice(prefix.length).trim().split(/ +/g);
-    const cmd = args.shift().toLowerCase();
-    if (cmd.length === 0) return;
-
-    let command = client.commands.get(cmd);
-    if (!command) command = client.commands.get(client.aliases.get(cmd));
-    if (command)
-      command.run(client, message, args);
-
-}
-});
-
-// Auto-Role is here!
-
-client.on("guildMemberAdd", async(member)=>{
-  const roleData = require("./database/guildData/autorole")
-  const data = await roleData.findOne({
-      GuildID: member.guild.id,
-  }).catch(err=>console.log(err));
-  
-  if (data) {
-      let role = data.Role;
-      let arole = member.guild.roles.cache.get(role);
-    if (role) {
-      member.roles.add(arole)
-    } else if (!role) {
-        return;
+client.categories = fs.readdirSync("./Commands/");
+client.setMaxListeners(0);
+const Cookie = YT_COOKIE;
+client.logger = Logger;
+client.utils = Util;
+client.say = Embeds;
+const player = new Player(client, {
+  leaveOnEnd: true,
+  leaveOnStop: true,
+  leaveOnEmpty: false,
+  leaveOnEmptyCooldown: 60000,
+  autoSelfDeaf: true,
+  initialVolume: 130,
+  ytdlDownloadOptions: {
+    requestOptions: {
+      headers: {
+        cookie: Cookie,
+      }
     }
-  } else if (!data) {
-      return;
-  }
+  },
 });
 
-client.login("YOUR_TOP_SECRET_BOT_TOKEN!")//Enter your bot token here
+client.player = player;
+client.db = new Enmap({ name: "musicdb" });
+
+loadCommands(client);
+loadEvents(client);
+loadPlayerEvents(client);
+loadSlashCommands(client);
+checkValid();
+
+// Error Handling
+
+process.on("uncaughtException", (err) => {
+  console.log("Uncaught Exception: " + err);
+
+  const exceptionembed = new EmbedBuilder()
+  .setTitle("Uncaught Exception")
+  .setDescription(`${err}`)
+  .setColor("Red")
+  client.channels.cache.get(ERROR_LOGS_CHANNEL).send({ embeds: [exceptionembed] })
+});
+
+process.on("unhandledRejection", (reason, promise) => {
+  console.log(
+    "[FATAL] Possibly Unhandled Rejection at: Promise ",
+    promise,
+    " reason: ",
+    reason.message
+  );
+
+   const rejectionembed = new EmbedBuilder()
+  .setTitle("Unhandled Promise Rejection")
+  .addFields([
+    { name: "Promise", value: `${promise}` },
+    { name: "Reason", value: `${reason.message}` },
+  ])
+  .setColor("Red")
+  client.channels.cache.get(ERROR_LOGS_CHANNEL).send({ embeds: [rejectionembed] })
+});
+
+client.login(BOT_TOKEN).then(() => {
+  console.log(
+    chalk.bgBlueBright.black(
+      ` Successfully logged in as: ${client.user.tag}`
+    )
+  );
+});
